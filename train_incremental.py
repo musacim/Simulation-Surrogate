@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_percentage_error
 import joblib
 
 # Load the dataset
@@ -15,80 +16,125 @@ regions = [
 ]
 
 # Initialize models and scaler
-velocity_model = RandomForestRegressor(random_state=42)
-pressure_model = RandomForestRegressor(random_state=42)
+velocity_model = GradientBoostingRegressor(random_state=42)
+pressure_model = GradientBoostingRegressor(random_state=42)
 scaler = StandardScaler()
 
-# Define retraining intervals
-train_interval = 5  # Train after every 5 time steps
-first_training_point = 15  # Train the first surrogate model at time step 15
-
-# Tolerance for accuracy calculation (percentage)
-accuracy_tolerance = 0.05  # Within 5% of the true value
+# Retraining parameters
+accuracy_threshold = 80.0  # Retrain if accuracy falls below 80%
+evaluation_interval = 5    # Evaluate performance every 5 time steps
 
 def calculate_accuracy(y_true, y_pred, tolerance):
-    """Calculate accuracy as the percentage of predictions within a tolerance of the true value."""
+    """
+    Calculate accuracy as the percentage of predictions within a tolerance of the true value.
+    """
     return np.mean(np.abs(y_true - y_pred) / y_true <= tolerance) * 100
 
 # Loop over regions
 for region_num, (start_time, end_time) in enumerate(regions, start=1):
     print(f"\n=== Processing Region {region_num}: Time Steps {start_time}-{end_time} ===\n")
 
-    # Determine the initial training time step
-    if region_num == 1:
-        current_time_step = first_training_point
-    else:
-        current_time_step = start_time + train_interval
+    # Define initial training time steps
+    initial_train_size = 10
+    initial_train_time_steps = range(start_time, start_time + initial_train_size)
+    
+    # Initial training data
+    training_data = data[data['lid_time_step'].isin(initial_train_time_steps)]
+    X_train = training_data[['lid_velocity', 'viscosity']]
+    y_velocity_train = training_data['velocity_magnitude']
+    y_pressure_train = training_data['pressure']
 
-    while current_time_step <= end_time:
-        # Use all data up to the current time step for training
-        train_time_steps = range(start_time, current_time_step)
-        test_time_steps = range(current_time_step, min(current_time_step + train_interval, end_time + 1))
+    # Fit scaler and train models
+    scaler.fit(X_train)
+    X_train_scaled = scaler.transform(X_train)
+    velocity_model.fit(X_train_scaled, y_velocity_train)
+    pressure_model.fit(X_train_scaled, y_pressure_train)
+    print(f"Initial training completed on time steps {list(initial_train_time_steps)}.")
 
-        # Prepare training data
-        training_data = data[data['lid_time_step'].isin(train_time_steps)]
-        X_train = training_data[['lid_velocity', 'viscosity']]
-        y_velocity_train = training_data['velocity_magnitude']
-        y_pressure_train = training_data['pressure']
+    # Initialize lists to store true and predicted values for evaluation
+    velocity_true_all = []
+    velocity_pred_all = []
+    pressure_true_all = []
+    pressure_pred_all = []
 
-        # Fit scaler and transform training data
-        scaler.fit(X_train)
-        X_train_scaled = scaler.transform(X_train)
-
-        # Train surrogate models with all data so far
-        velocity_model.fit(X_train_scaled, y_velocity_train)
-        pressure_model.fit(X_train_scaled, y_pressure_train)
-
-        # Save the models and scaler
-        joblib.dump({"velocity": velocity_model, "pressure": pressure_model}, "/home/musacim/simulation/openfoam/surrogate_model.joblib")
-        joblib.dump(scaler, "/home/musacim/simulation/openfoam/scaler.joblib")
-        print(f"Trained surrogate models with data up to time step {current_time_step - 1}.")
-
+    # Iterate through subsequent time steps
+    for current_time_step in range(start_time + initial_train_size, end_time + 1):
         # Prepare test data
-        test_data = data[data['lid_time_step'].isin(test_time_steps)]
-        if test_data.shape[0] < 1:
-            print(f"Not enough test samples to compute accuracy at time steps {list(test_time_steps)}.\n")
-        else:
-            X_test = test_data[['lid_velocity', 'viscosity']]
-            y_velocity_test = test_data['velocity_magnitude']
-            y_pressure_test = test_data['pressure']
+        test_data = data[data['lid_time_step'] == current_time_step]
+        if test_data.empty:
+            print(f"No data available for time step {current_time_step}.\n")
+            continue
 
-            # Transform test data using the scaler
-            X_test_scaled = scaler.transform(X_test)
+        X_test = test_data[['lid_velocity', 'viscosity']]
+        y_velocity_test = test_data['velocity_magnitude'].values[0]
+        y_pressure_test = test_data['pressure'].values[0]
+        X_test_scaled = scaler.transform(X_test)
 
-            # Predict using the surrogate models
-            y_velocity_pred = velocity_model.predict(X_test_scaled)
-            y_pressure_pred = pressure_model.predict(X_test_scaled)
+        # Predict
+        y_velocity_pred = velocity_model.predict(X_test_scaled)[0]
+        y_pressure_pred = pressure_model.predict(X_test_scaled)[0]
 
-            # Evaluate the models
-            velocity_accuracy = calculate_accuracy(y_velocity_test, y_velocity_pred, accuracy_tolerance)
-            pressure_accuracy = calculate_accuracy(y_pressure_test, y_pressure_pred, accuracy_tolerance)
+        # Store predictions and true values
+        velocity_true_all.append(y_velocity_test)
+        velocity_pred_all.append(y_velocity_pred)
+        pressure_true_all.append(y_pressure_test)
+        pressure_pred_all.append(y_pressure_pred)
 
-            print(f"Test Time Steps: {list(test_time_steps)}")
-            print(f"Velocity Model - Accuracy: {velocity_accuracy:.2f}%")
-            print(f"Pressure Model - Accuracy: {pressure_accuracy:.2f}%\n")
+        # Calculate accuracy for the current prediction
+        velocity_accuracy = calculate_accuracy(np.array([y_velocity_test]), np.array([y_velocity_pred]),  tolerance=0.1)
+        pressure_accuracy = calculate_accuracy(np.array([y_pressure_test]), np.array([y_pressure_pred]),  tolerance=0.1)
+        velocity_mape = mean_absolute_percentage_error([y_velocity_test], [y_velocity_pred])
+        pressure_mape = mean_absolute_percentage_error([y_pressure_test], [y_pressure_pred])
 
-        # Increment the current time step by the training interval
-        current_time_step += train_interval
+        print(f"Time Step: {current_time_step}")
+        print(f"Velocity Model - Accuracy: {velocity_accuracy:.2f}% (MAPE: {velocity_mape:.4f})")
+        print(f"Pressure Model - Accuracy: {pressure_accuracy:.2f}% (MAPE: {pressure_mape:.4f})\n")
+
+        # Determine if it's time to evaluate and possibly retrain
+        steps_since_initial = current_time_step - start_time
+        if (steps_since_initial % evaluation_interval) == 0:
+            print(f"--- Evaluating model performance up to time step {current_time_step} ---")
+
+            # Prepare cumulative data for evaluation
+            eval_data = data[data['lid_time_step'].isin(range(start_time, current_time_step + 1))]
+            X_eval = eval_data[['lid_velocity', 'viscosity']]
+            y_velocity_eval = eval_data['velocity_magnitude']
+            y_pressure_eval = eval_data['pressure']
+
+            # Scale evaluation data
+            X_eval_scaled = scaler.transform(X_eval)
+
+            # Predict on evaluation data
+            y_velocity_eval_pred = velocity_model.predict(X_eval_scaled)
+            y_pressure_eval_pred = pressure_model.predict(X_eval_scaled)
+
+            # Calculate overall accuracy
+            overall_velocity_accuracy = calculate_accuracy(y_velocity_eval.values, y_velocity_eval_pred, tolerance=0.1)
+            overall_pressure_accuracy = calculate_accuracy(y_pressure_eval.values, y_pressure_eval_pred, tolerance=0.1)
+            overall_velocity_mape = mean_absolute_percentage_error(y_velocity_eval, y_velocity_eval_pred)
+            overall_pressure_mape = mean_absolute_percentage_error(y_pressure_eval, y_pressure_eval_pred)
+
+            print(f"Overall Velocity Model - Accuracy: {overall_velocity_accuracy:.2f}% (MAPE: {overall_velocity_mape:.4f})")
+            print(f"Overall Pressure Model - Accuracy: {overall_pressure_accuracy:.2f}% (MAPE: {overall_pressure_mape:.4f})\n")
+
+            # Check if accuracy falls below the threshold
+            if (overall_velocity_accuracy < accuracy_threshold) or (overall_pressure_accuracy < accuracy_threshold):
+                print(f"Accuracy fell below {accuracy_threshold}%. Retraining models with data up to time step {current_time_step}.\n")
+
+                # Retrain on all data up to current_time_step
+                retrain_time_steps = range(start_time, current_time_step + 1)
+                retrain_data = data[data['lid_time_step'].isin(retrain_time_steps)]
+                X_retrain = retrain_data[['lid_velocity', 'viscosity']]
+                y_velocity_retrain = retrain_data['velocity_magnitude']
+                y_pressure_retrain = retrain_data['pressure']
+
+                # Fit scaler and retrain models
+                scaler.fit(X_retrain)
+                X_retrain_scaled = scaler.transform(X_retrain)
+                velocity_model.fit(X_retrain_scaled, y_velocity_retrain)
+                pressure_model.fit(X_retrain_scaled, y_pressure_retrain)
+                print(f"Retrained models on time steps {list(retrain_time_steps)}.\n")
+            else:
+                print(f"Model performance is satisfactory. No retraining needed.\n")
 
     print(f"Completed processing for Region {region_num}.\n")
