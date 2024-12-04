@@ -1,5 +1,3 @@
-# sim_time_series.py
-
 import os
 import subprocess
 import numpy as np
@@ -8,24 +6,20 @@ import numpy as np
 base_case_dir = "/home/musacim/simulation/openfoam/tutorials/incompressible/icoFoam/cavity/cavity"
 output_base_dir = "/home/musacim/simulation/openfoam/cavity_simulations"
 
-# Total time steps to simulate
-time_steps = range(1, 31)  # Simulate 30 time steps
+# Time steps to simulate
+time_steps = range(1, 11)  # Simulate 10 time steps
 
-# Define regions
+# Function to generate new parameters over time
 def get_parameters_for_time_step(t):
-    if 1 <= t <= 10:
-        # Training Region
-        lid_velocity = 1.0 + 0.2 * (t - 1)  # 1.0 to 3.0 m/s
-        viscosity = 1e-3 + (1e-2 - 1e-3) * (t - 1) / 9  # 1e-3 to 1e-2 m²/s
-    elif 11 <= t <= 20:
-        # First Shifting Region
-        lid_velocity = 3.0 + 0.2 * (t - 10)  # 3.0 to 5.0 m/s
-        viscosity = 1e-2 - (1e-2 - 1e-3) * (t - 10) / 10  # 1e-2 to 1e-3 m²/s
-    elif 21 <= t <= 30:
-        # Second Shifting Region
-        lid_velocity = 5.0 + 0.2 * (t - 20)  # 5.0 to 7.0 m/s
-        viscosity = 1e-3 - (1e-3 - 1e-4) * (t - 20) / 10  # 1e-3 to 1e-4 m²/s
-    return lid_velocity, viscosity
+    # For t <= 5, use initial parameter ranges (training data)
+    if t <= 5:
+        lid_velocities = np.arange(1.0, 3.1, 0.5)  # Lid velocities from 1.0 to 3.0 m/s
+        viscosities = np.logspace(-3, -2, num=5)    # Viscosities from 1e-3 to 1e-2 m²/s
+    else:
+        # For t > 5, use extended parameter ranges (testing data)
+        lid_velocities = np.arange(3.5, 5.1, 0.5)  # Lid velocities from 3.5 to 5.0 m/s
+        viscosities = np.logspace(-4, -3, num=5)    # Viscosities from 1e-4 to 1e-3 m²/s
+    return lid_velocities, viscosities
 
 # Helper functions
 def create_case_directory(lid_velocity, viscosity, time_step):
@@ -91,22 +85,22 @@ def modify_viscosity(case_dir, viscosity):
                 file.write(line)
 
 def run_simulation(case_dir):
-    try:
-        # Generate mesh
-        subprocess.run(["blockMesh"], cwd=case_dir, check=True)
-        # Run icoFoam solver and save output to log file
-        log_file = os.path.join(case_dir, "log")
-        with open(log_file, "w") as log:
-            subprocess.run(["icoFoam"], cwd=case_dir, stdout=log, stderr=subprocess.STDOUT, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Simulation failed in '{case_dir}': {e}")
+    # Generate mesh
+    subprocess.run(["blockMesh"], cwd=case_dir, check=True)
+    # Run icoFoam solver and save output to log file
+    log_file = os.path.join(case_dir, "log")
+    with open(log_file, "w") as log:
+        subprocess.run(["icoFoam"], cwd=case_dir, stdout=log, stderr=subprocess.STDOUT, check=True)
+    # You can add error handling if needed
 
 # Main loop to create and run simulations over time steps
 os.makedirs(output_base_dir, exist_ok=True)
 for t in time_steps:
-    lid_velocity, viscosity = get_parameters_for_time_step(t)
-    case_dir = create_case_directory(lid_velocity, viscosity, t)
-    modify_velocity(case_dir, lid_velocity)
-    modify_viscosity(case_dir, viscosity)
-    run_simulation(case_dir)
-    print(f"Completed simulation for lid velocity {lid_velocity:.2f} m/s, viscosity {viscosity:.3e} m²/s at time step {t}")
+    lid_velocities, viscosities = get_parameters_for_time_step(t)
+    for lid_velocity in lid_velocities:
+        for viscosity in viscosities:
+            case_dir = create_case_directory(lid_velocity, viscosity, t)
+            modify_velocity(case_dir, lid_velocity)
+            modify_viscosity(case_dir, viscosity)
+            run_simulation(case_dir)
+            print(f"Completed simulation for lid velocity {lid_velocity:.2f} m/s, viscosity {viscosity:.3e} m²/s at time step {t}")
