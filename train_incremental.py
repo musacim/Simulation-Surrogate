@@ -19,12 +19,12 @@ scaler = StandardScaler()
 # Define accuracy threshold
 accuracy_threshold = 95.0  # 95%
 
-# Split data into initial training data (t <= 5) and new data (t > 5)
-initial_training_data = data[data['lid_time_step'] <= 5]
-new_data = data[data['lid_time_step'] > 5]
+# Split data into initial training data (Region 1) and new data (Regions 2 and 3)
+initial_training_data = data[data['lid_time_step'] <= 4]
+new_data = data[data['lid_time_step'] > 4]
 
 # Prepare the initial training data
-X_train_initial = initial_training_data[['lid_velocity', 'viscosity', 'lid_time_step']]
+X_train_initial = initial_training_data[['lid_velocity', 'viscosity']]
 y_velocity_train_initial = initial_training_data['velocity_magnitude']
 y_pressure_train_initial = initial_training_data['pressure']
 
@@ -40,7 +40,7 @@ pressure_model.fit(X_train_initial_scaled, y_pressure_train_initial)
 joblib.dump({"velocity": velocity_model, "pressure": pressure_model}, "/home/musacim/simulation/openfoam/surrogate_model.joblib")
 joblib.dump(scaler, "/home/musacim/simulation/openfoam/scaler.joblib")
 
-print("Initial surrogate models trained on data from time steps 1 to 5.\n")
+print("Initial surrogate models trained on data from Region 1 (Time Steps 1-4).\n")
 
 # Loop over each time step in new data
 unique_time_steps = new_data['lid_time_step'].unique()
@@ -49,7 +49,7 @@ for current_time in unique_time_steps:
     current_data = new_data[new_data['lid_time_step'] == current_time]
     
     # Prepare the data
-    X_current = current_data[['lid_velocity', 'viscosity', 'lid_time_step']]
+    X_current = current_data[['lid_velocity', 'viscosity']]
     y_velocity_current = current_data['velocity_magnitude']
     y_pressure_current = current_data['pressure']
     
@@ -76,7 +76,7 @@ for current_time in unique_time_steps:
         print("Accuracy below threshold. Retraining the model with new data...\n")
         # Retrain the models with all available data up to current time
         combined_data = data[data['lid_time_step'] <= current_time]
-        X_combined = combined_data[['lid_velocity', 'viscosity', 'lid_time_step']]
+        X_combined = combined_data[['lid_velocity', 'viscosity']]
         y_velocity_combined = combined_data['velocity_magnitude']
         y_pressure_combined = combined_data['pressure']
         

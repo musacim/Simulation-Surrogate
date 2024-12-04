@@ -12,24 +12,26 @@ output_csv = "/home/musacim/simulation/openfoam/simulation_data.csv"
 # Time steps (assuming time steps from 1 to 10)
 time_steps = range(1, 11)
 
-# Function to generate parameters for time step, matching sim_time_series.py
+# Function to generate parameters for time steps with gradual shifts
 def get_parameters_for_time_step(t):
-    if t <= 5:
-        lid_velocities = np.arange(1.0, 3.1, 0.5)  # Lid velocities from 1.0 to 3.0 m/s
-        viscosities = np.logspace(-3, -2, num=5)    # Viscosities from 1e-3 to 1e-2 m²/s
+    if t <= 4:
+        lid_velocities = np.linspace(1.0, 2.0, num=3)
+        viscosities = np.full(3, 1e-3)
+    elif 5 <= t <= 7:
+        lid_velocities = np.linspace(2.0, 3.0, num=3) + 0.2 * (t - 4)
+        viscosities = np.full(3, 1e-3) * (1 - 0.1 * (t - 4))
     else:
-        lid_velocities = np.arange(3.5, 5.1, 0.5)  # Lid velocities from 3.5 to 5.0 m/s
-        viscosities = np.logspace(-4, -3, num=5)    # Viscosities from 1e-4 to 1e-3 m²/s
+        lid_velocities = np.linspace(3.5, 4.5, num=3) + 0.1 * (t - 7)
+        viscosities = np.full(3, 7e-4) * (1 - 0.05 * (t - 7))
     return lid_velocities, viscosities
 
 # Generate list of case directories to process
 case_dirs = []
 for t in time_steps:
     lid_velocities, viscosities = get_parameters_for_time_step(t)
-    for lid_velocity in lid_velocities:
-        for viscosity in viscosities:
-            case_name = f"cavity_{lid_velocity:.2f}ms_{viscosity:.3e}_t{t}".replace('+', '')
-            case_dirs.append(case_name)
+    for lid_velocity, viscosity in zip(lid_velocities, viscosities):
+        case_name = f"cavity_{lid_velocity:.2f}ms_{viscosity:.3e}_t{t}".replace('+', '')
+        case_dirs.append(case_name)
 
 def parse_openfoam_vector_field(file_path):
     vectors = []
@@ -134,7 +136,6 @@ for case_dir in case_dirs:
             "lid_velocity": lid_velocity,
             "viscosity": viscosity,
             "lid_time_step": lid_time_step,
-            "simulation_time": float(latest_sim_time),
             "velocity_magnitude": avg_velocity_magnitude,
             "pressure": avg_pressure
         })
