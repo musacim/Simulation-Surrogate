@@ -1,97 +1,94 @@
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import r2_score
 from sklearn.preprocessing import StandardScaler
 import joblib
 
 # Load the dataset
 data = pd.read_csv('/home/musacim/simulation/openfoam/simulation_data.csv')
 
-# Sort data by time step
-data = data.sort_values('lid_time_step')
+# Define regions
+regions = [
+    (1, 25),   # Region 1: Time steps 1-25
+    (26, 40),  # Region 2: Time steps 26-40
+    (41, 55)   # Region 3: Time steps 41-55
+]
 
 # Initialize models and scaler
 velocity_model = RandomForestRegressor(random_state=42)
 pressure_model = RandomForestRegressor(random_state=42)
 scaler = StandardScaler()
 
-# Define accuracy threshold
-accuracy_threshold = 95.0  # 95%
+# Define retraining intervals
+train_interval = 5  # Train after every 5 time steps
+first_training_point = 15  # Train the first surrogate model at time step 15
 
-# Split data into initial training data (Region 1) and new data (Regions 2 and 3)
-initial_training_data = data[data['lid_time_step'] <= 4]
-new_data = data[data['lid_time_step'] > 4]
+# Tolerance for accuracy calculation (percentage)
+accuracy_tolerance = 0.05  # Within 5% of the true value
 
-# Prepare the initial training data
-X_train_initial = initial_training_data[['lid_velocity', 'viscosity']]
-y_velocity_train_initial = initial_training_data['velocity_magnitude']
-y_pressure_train_initial = initial_training_data['pressure']
+def calculate_accuracy(y_true, y_pred, tolerance):
+    """Calculate accuracy as the percentage of predictions within a tolerance of the true value."""
+    return np.mean(np.abs(y_true - y_pred) / y_true <= tolerance) * 100
 
-# Scale the data
-scaler.fit(X_train_initial)
-X_train_initial_scaled = scaler.transform(X_train_initial)
+# Loop over regions
+for region_num, (start_time, end_time) in enumerate(regions, start=1):
+    print(f"\n=== Processing Region {region_num}: Time Steps {start_time}-{end_time} ===\n")
 
-# Train the models on initial data
-velocity_model.fit(X_train_initial_scaled, y_velocity_train_initial)
-pressure_model.fit(X_train_initial_scaled, y_pressure_train_initial)
+    # Determine the initial training time step
+    if region_num == 1:
+        current_time_step = first_training_point
+    else:
+        current_time_step = start_time + train_interval
 
-# Save the initial models and scaler
-joblib.dump({"velocity": velocity_model, "pressure": pressure_model}, "/home/musacim/simulation/openfoam/surrogate_model.joblib")
-joblib.dump(scaler, "/home/musacim/simulation/openfoam/scaler.joblib")
+    while current_time_step <= end_time:
+        # Use all data up to the current time step for training
+        train_time_steps = range(start_time, current_time_step)
+        test_time_steps = range(current_time_step, min(current_time_step + train_interval, end_time + 1))
 
-print("Initial surrogate models trained on data from Region 1 (Time Steps 1-4).\n")
+        # Prepare training data
+        training_data = data[data['lid_time_step'].isin(train_time_steps)]
+        X_train = training_data[['lid_velocity', 'viscosity']]
+        y_velocity_train = training_data['velocity_magnitude']
+        y_pressure_train = training_data['pressure']
 
-# Loop over each time step in new data
-unique_time_steps = new_data['lid_time_step'].unique()
-for current_time in unique_time_steps:
-    # Get data for the current time step
-    current_data = new_data[new_data['lid_time_step'] == current_time]
-    
-    # Prepare the data
-    X_current = current_data[['lid_velocity', 'viscosity']]
-    y_velocity_current = current_data['velocity_magnitude']
-    y_pressure_current = current_data['pressure']
-    
-    # Scale the data using the existing scaler
-    X_current_scaled = scaler.transform(X_current)
-    
-    # Predict using the surrogate models
-    y_velocity_pred = velocity_model.predict(X_current_scaled)
-    y_pressure_pred = pressure_model.predict(X_current_scaled)
-    
-    # Evaluate the models
-    velocity_r2 = r2_score(y_velocity_current, y_velocity_pred)
-    pressure_r2 = r2_score(y_pressure_current, y_pressure_pred)
-    
-    velocity_accuracy = velocity_r2 * 100
-    pressure_accuracy = pressure_r2 * 100
-    
-    print(f"Time Step: {current_time}")
-    print(f"Velocity Model - Accuracy: {velocity_accuracy:.2f}%")
-    print(f"Pressure Model - Accuracy: {pressure_accuracy:.2f}%\n")
-    
-    # Check if accuracy drops below threshold
-    if velocity_accuracy < accuracy_threshold or pressure_accuracy < accuracy_threshold:
-        print("Accuracy below threshold. Retraining the model with new data...\n")
-        # Retrain the models with all available data up to current time
-        combined_data = data[data['lid_time_step'] <= current_time]
-        X_combined = combined_data[['lid_velocity', 'viscosity']]
-        y_velocity_combined = combined_data['velocity_magnitude']
-        y_pressure_combined = combined_data['pressure']
-        
-        # Update scaler with new data
-        scaler.fit(X_combined)
-        X_combined_scaled = scaler.transform(X_combined)
-        
-        # Retrain the models
-        velocity_model.fit(X_combined_scaled, y_velocity_combined)
-        pressure_model.fit(X_combined_scaled, y_pressure_combined)
-        
-        # Save the updated models and scaler
+        # Fit scaler and transform training data
+        scaler.fit(X_train)
+        X_train_scaled = scaler.transform(X_train)
+
+        # Train surrogate models with all data so far
+        velocity_model.fit(X_train_scaled, y_velocity_train)
+        pressure_model.fit(X_train_scaled, y_pressure_train)
+
+        # Save the models and scaler
         joblib.dump({"velocity": velocity_model, "pressure": pressure_model}, "/home/musacim/simulation/openfoam/surrogate_model.joblib")
         joblib.dump(scaler, "/home/musacim/simulation/openfoam/scaler.joblib")
-        
-        print("Retraining completed.\n")
-    else:
-        print("Accuracy is acceptable. No retraining needed.\n")
+        print(f"Trained surrogate models with data up to time step {current_time_step - 1}.")
+
+        # Prepare test data
+        test_data = data[data['lid_time_step'].isin(test_time_steps)]
+        if test_data.shape[0] < 1:
+            print(f"Not enough test samples to compute accuracy at time steps {list(test_time_steps)}.\n")
+        else:
+            X_test = test_data[['lid_velocity', 'viscosity']]
+            y_velocity_test = test_data['velocity_magnitude']
+            y_pressure_test = test_data['pressure']
+
+            # Transform test data using the scaler
+            X_test_scaled = scaler.transform(X_test)
+
+            # Predict using the surrogate models
+            y_velocity_pred = velocity_model.predict(X_test_scaled)
+            y_pressure_pred = pressure_model.predict(X_test_scaled)
+
+            # Evaluate the models
+            velocity_accuracy = calculate_accuracy(y_velocity_test, y_velocity_pred, accuracy_tolerance)
+            pressure_accuracy = calculate_accuracy(y_pressure_test, y_pressure_pred, accuracy_tolerance)
+
+            print(f"Test Time Steps: {list(test_time_steps)}")
+            print(f"Velocity Model - Accuracy: {velocity_accuracy:.2f}%")
+            print(f"Pressure Model - Accuracy: {pressure_accuracy:.2f}%\n")
+
+        # Increment the current time step by the training interval
+        current_time_step += train_interval
+
+    print(f"Completed processing for Region {region_num}.\n")

@@ -1,5 +1,3 @@
-# plot_data.py
-
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -11,13 +9,16 @@ data_csv = "/home/musacim/simulation/openfoam/simulation_data.csv"
 # Load the dataset
 df = pd.read_csv(data_csv)
 
+# Ensure 'lid_time_step' is of integer type
+df['lid_time_step'] = df['lid_time_step'].astype(int)
+
 # Define regions based on 'lid_time_step'
 def get_region(t):
-    if 1 <= t <= 4:
+    if 1 <= t <= 25:
         return "Region1_Training"
-    elif 5 <= t <= 7:
+    elif 26 <= t <= 40:
         return "Region2_Shifting"
-    elif 8 <= t <= 10:
+    elif 41 <= t <= 55:
         return "Region3_Shifting"
     else:
         return "Unknown"
@@ -116,9 +117,9 @@ plt.figure(figsize=(8, 6))
 sns.boxplot(
     x='region',
     y='lid_velocity',
-    hue='region',  # Added hue parameter
+    hue='region',
     data=df_plot,
-    palette=palette_dict,  # Use the palette dictionary
+    palette=palette_dict,
     order=regions_order
 )
 plt.title('Box Plot of Lid Velocity by Region', fontsize=16)
@@ -134,9 +135,9 @@ plt.figure(figsize=(8, 6))
 sns.boxplot(
     x='region',
     y='viscosity',
-    hue='region',  # Added hue parameter
+    hue='region',
     data=df_plot,
-    palette=palette_dict,  # Use the palette dictionary
+    palette=palette_dict,
     order=regions_order
 )
 plt.title('Box Plot of Viscosity by Region', fontsize=16)

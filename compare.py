@@ -34,45 +34,44 @@ def run_surrogate(input_params):
     surrogate_time = end_time - start_time
     return surrogate_time, velocity_pred, pressure_pred
 
-# Function to generate parameters for time steps with gradual shifts
+# Function to generate parameters for time steps
 def get_parameters_for_time_step(t):
-    if t <= 4:
-        lid_velocities = np.linspace(1.0, 2.0, num=3)
-        viscosities = np.full(3, 1e-3)
-    elif 5 <= t <= 7:
-        lid_velocities = np.linspace(2.0, 3.0, num=3) + 0.2 * (t - 4)
-        viscosities = np.full(3, 1e-3) * (1 - 0.1 * (t - 4))
+    if t <= 15:
+        lid_velocity = 1.0
+        viscosity = 1e-3
+    elif 16 <= t <= 30:
+        lid_velocity = 1.0 + 0.1 * (t - 15)
+        viscosity = 1e-3 - 5e-5 * (t - 15)
     else:
-        lid_velocities = np.linspace(3.5, 4.5, num=3) + 0.1 * (t - 7)
-        viscosities = np.full(3, 7e-4) * (1 - 0.05 * (t - 7))
-    return lid_velocities, viscosities
+        lid_velocity = 2.5 + 0.05 * (t - 30)
+        viscosity = 2.5e-4 - 1e-5 * (t - 30)
+    return lid_velocity, viscosity
 
 # Compare over time steps
-time_steps = range(1, 11)
+time_steps = range(1, 46)
 for t in time_steps:
-    lid_velocities, viscosities = get_parameters_for_time_step(t)
-    for lid_velocity, viscosity in zip(lid_velocities, viscosities):
-        input_params = {"lid_velocity": lid_velocity, "viscosity": viscosity}
-    
-        # Define simulation case directory
-        case_name = f"cavity_{lid_velocity:.2f}ms_{viscosity:.3e}_t{t}".replace('+', '')
-        simulation_case_dir = os.path.join("/home/musacim/simulation/openfoam/cavity_simulations", case_name)
-    
-        # Check if the directory exists
-        if not os.path.exists(simulation_case_dir):
-            print(f"Case directory '{simulation_case_dir}' does not exist. Skipping this case.")
-            continue
-    
-        # Measure simulation time
-        simulation_time = run_simulation(simulation_case_dir)
-    
-        # Measure surrogate model time
-        surrogate_time, velocity_pred, pressure_pred = run_surrogate(input_params)
-    
-        # Print comparison
-        print(f"Time Step: {t}")
-        print(f"Lid Velocity: {lid_velocity:.2f} m/s, Viscosity: {viscosity:.3e} m²/s")
-        print(f"Simulation Time: {simulation_time:.4f} seconds")
-        print(f"Surrogate Model Time: {surrogate_time:.4f} seconds")
-        speedup_ratio = simulation_time / surrogate_time
-        print(f"Speedup Ratio (Simulation / Surrogate): {speedup_ratio:.2f}\n")
+    lid_velocity, viscosity = get_parameters_for_time_step(t)
+    input_params = {"lid_velocity": lid_velocity, "viscosity": viscosity}
+
+    # Define simulation case directory
+    case_name = f"cavity_{lid_velocity:.2f}ms_{viscosity:.3e}_t{t}".replace('+', '')
+    simulation_case_dir = os.path.join("/home/musacim/simulation/openfoam/cavity_simulations", case_name)
+
+    # Check if the directory exists
+    if not os.path.exists(simulation_case_dir):
+        print(f"Case directory '{simulation_case_dir}' does not exist. Skipping this case.")
+        continue
+
+    # Measure simulation time
+    simulation_time = run_simulation(simulation_case_dir)
+
+    # Measure surrogate model time
+    surrogate_time, velocity_pred, pressure_pred = run_surrogate(input_params)
+
+    # Print comparison
+    print(f"Time Step: {t}")
+    print(f"Lid Velocity: {lid_velocity:.2f} m/s, Viscosity: {viscosity:.3e} m²/s")
+    print(f"Simulation Time: {simulation_time:.4f} seconds")
+    print(f"Surrogate Model Time: {surrogate_time:.4f} seconds")
+    speedup_ratio = simulation_time / surrogate_time
+    print(f"Speedup Ratio (Simulation / Surrogate): {speedup_ratio:.2f}\n")

@@ -6,26 +6,27 @@ import numpy as np
 base_case_dir = "/home/musacim/simulation/openfoam/tutorials/incompressible/icoFoam/cavity/cavity"
 output_base_dir = "/home/musacim/simulation/openfoam/cavity_simulations"
 
-# Time steps to simulate
-time_steps = range(1, 11)  # Simulate 10 time steps
+# Total time steps
+time_steps = range(1, 56)  # Time steps from 1 to 55 (25 + 15 + 15)
 
 # Function to generate parameters for time steps with gradual shifts
 def get_parameters_for_time_step(t):
-    if t <= 4:
-        # Region 1: Initial training data (stable parameters)
-        lid_velocities = np.linspace(1.0, 2.0, num=3)  # 1.0, 1.5, 2.0 m/s
-        viscosities = np.full(3, 1e-3)  # Viscosity = 1e-3 m²/s
-    elif 5 <= t <= 7:
-        # Region 2: Gradual shift in parameters
-        lid_velocities = np.linspace(2.0, 3.0, num=3) + 0.2 * (t - 4)  # Gradually increasing
-        viscosities = np.full(3, 1e-3) * (1 - 0.1 * (t - 4))  # Gradually decreasing viscosity
+    np.random.seed(t)  # Ensure reproducibility for each time step
+    if t <= 25:
+        # Region 1: Stable parameters with slight random noise
+        lid_velocity = 1.0 + 0.03 * (t - 1) + np.random.uniform(-0.02, 0.02)
+        viscosity = 1e-3 + 2e-5 * (t - 1) + np.random.uniform(-1e-5, 1e-5)
+    elif 26 <= t <= 40:
+        # Region 2: Noticeable jump in range with gradual change
+        lid_velocity = 2.0 + 0.1 * (t - 25) + np.random.uniform(-0.03, 0.03)
+        viscosity = 5e-4 + 1e-5 * (t - 25) + np.random.uniform(-2e-5, 2e-5)
     else:
-        # Region 3: Further gradual change
-        lid_velocities = np.linspace(3.5, 4.5, num=3) + 0.1 * (t - 7)  # Further increase
-        viscosities = np.full(3, 7e-4) * (1 - 0.05 * (t - 7))  # Further decrease in viscosity
-    return lid_velocities, viscosities
+        # Region 3: Distinct change with larger variability
+        lid_velocity = 3.5 + 0.08 * (t - 40) + np.random.uniform(-0.05, 0.05)
+        viscosity = 3e-4 - 1e-5 * (t - 40) + np.random.uniform(-2e-5, 2e-5)
+    return lid_velocity, viscosity
 
-# Helper functions
+# Helper functions (same as before)
 def create_case_directory(lid_velocity, viscosity, time_step):
     case_name = f"cavity_{lid_velocity:.2f}ms_{viscosity:.3e}_t{time_step}"
     case_dir = os.path.join(output_base_dir, case_name)
@@ -95,15 +96,13 @@ def run_simulation(case_dir):
     log_file = os.path.join(case_dir, "log")
     with open(log_file, "w") as log:
         subprocess.run(["icoFoam"], cwd=case_dir, stdout=log, stderr=subprocess.STDOUT, check=True)
-    # You can add error handling if needed
 
 # Main loop to create and run simulations over time steps
 os.makedirs(output_base_dir, exist_ok=True)
 for t in time_steps:
-    lid_velocities, viscosities = get_parameters_for_time_step(t)
-    for lid_velocity, viscosity in zip(lid_velocities, viscosities):
-        case_dir = create_case_directory(lid_velocity, viscosity, t)
-        modify_velocity(case_dir, lid_velocity)
-        modify_viscosity(case_dir, viscosity)
-        run_simulation(case_dir)
-        print(f"Completed simulation for lid velocity {lid_velocity:.2f} m/s, viscosity {viscosity:.3e} m²/s at time step {t}")
+    lid_velocity, viscosity = get_parameters_for_time_step(t)
+    case_dir = create_case_directory(lid_velocity, viscosity, t)
+    modify_velocity(case_dir, lid_velocity)
+    modify_viscosity(case_dir, viscosity)
+    run_simulation(case_dir)
+    print(f"Completed simulation for lid velocity {lid_velocity:.2f} m/s, viscosity {viscosity:.3e} m²/s at time step {t}")

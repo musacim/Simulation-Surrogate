@@ -1,7 +1,6 @@
 import os
 import math
 import pandas as pd
-import numpy as np
 
 # Define the base directory where simulation data is located
 base_dir = "/home/musacim/simulation/openfoam/cavity_simulations"
@@ -9,29 +8,29 @@ base_dir = "/home/musacim/simulation/openfoam/cavity_simulations"
 # Define the output CSV file
 output_csv = "/home/musacim/simulation/openfoam/simulation_data.csv"
 
-# Time steps (assuming time steps from 1 to 10)
-time_steps = range(1, 11)
+# List all case directories in the base directory
+# Only include directories that contain '_t' indicating time step
+case_dirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and '_t' in d]
 
-# Function to generate parameters for time steps with gradual shifts
-def get_parameters_for_time_step(t):
-    if t <= 4:
-        lid_velocities = np.linspace(1.0, 2.0, num=3)
-        viscosities = np.full(3, 1e-3)
-    elif 5 <= t <= 7:
-        lid_velocities = np.linspace(2.0, 3.0, num=3) + 0.2 * (t - 4)
-        viscosities = np.full(3, 1e-3) * (1 - 0.1 * (t - 4))
-    else:
-        lid_velocities = np.linspace(3.5, 4.5, num=3) + 0.1 * (t - 7)
-        viscosities = np.full(3, 7e-4) * (1 - 0.05 * (t - 7))
-    return lid_velocities, viscosities
+def parse_case_directory_name(case_name):
+    # Expected format: cavity_{lid_velocity}ms_{viscosity}_t{time_step}
+    parts = case_name.split('_')
+    if len(parts) != 4:
+        print(f"Skipping directory '{case_name}' due to unexpected format")
+        return None, None, None
+    try:
+        lid_velocity_str = parts[1][:-2]  # Remove 'ms'
+        viscosity_str = parts[2]
+        lid_time_step_str = parts[3][1:]  # Remove 't'
 
-# Generate list of case directories to process
-case_dirs = []
-for t in time_steps:
-    lid_velocities, viscosities = get_parameters_for_time_step(t)
-    for lid_velocity, viscosity in zip(lid_velocities, viscosities):
-        case_name = f"cavity_{lid_velocity:.2f}ms_{viscosity:.3e}_t{t}".replace('+', '')
-        case_dirs.append(case_name)
+        lid_velocity = float(lid_velocity_str)
+        viscosity = float(viscosity_str)
+        lid_time_step = int(lid_time_step_str)
+
+        return lid_velocity, viscosity, lid_time_step
+    except (ValueError, IndexError) as e:
+        print(f"Error parsing case directory '{case_name}': {e}")
+        return None, None, None
 
 def parse_openfoam_vector_field(file_path):
     vectors = []
@@ -80,22 +79,12 @@ data_list = []
 
 for case_dir in case_dirs:
     # Parse parameters from directory name
-    parts = case_dir.split('_')
-    try:
-        lid_velocity = float(parts[1][:-2])  # Remove 'ms'
-        viscosity = float(parts[2])
-        lid_time_step = int(parts[3][1:])  # Remove 't'
-    except (IndexError, ValueError) as e:
-        print(f"Error parsing case directory '{case_dir}': {e}")
-        continue
+    lid_velocity, viscosity, lid_time_step = parse_case_directory_name(case_dir)
+    if lid_velocity is None:
+        continue  # Skip cases where parsing failed
 
     # Path to the simulation case
     case_path = os.path.join(base_dir, case_dir)
-
-    # Check if the case directory exists
-    if not os.path.exists(case_path):
-        print(f"Case directory '{case_path}' does not exist.")
-        continue
 
     # Process the latest simulation time directory
     simulation_times = [d for d in os.listdir(case_path)
@@ -142,5 +131,9 @@ for case_dir in case_dirs:
 
 # Create DataFrame and save to CSV
 df = pd.DataFrame(data_list)
+
+# Sort the DataFrame by 'lid_time_step' to maintain order
+df = df.sort_values('lid_time_step')
+
 df.to_csv(output_csv, index=False)
 print(f"Data saved to {output_csv}")
