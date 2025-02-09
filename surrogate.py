@@ -1,97 +1,111 @@
 #!/usr/bin/env python3
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, r2_score
-import joblib  # for saving the trained model
+from sklearn.metrics import mean_absolute_error
+import joblib
 
 # -------------------------
-# File Paths & Configuration
+# Configuration Parameters
 # -------------------------
-# Simulation output CSV: columns: lid_velocity, viscosity, lid_time_step, velocity_magnitude, pressure
-output_data_path = "/home/musacim/simulation/openfoam/simulation_output_data.csv"
+INITIAL_TRAIN_SIZE = 100         # Number of initial samples used to train the surrogate model
+DRIFT_THRESHOLD_VEL = 0.02       # Acceptable error threshold for velocity magnitude (adjust as needed)
+DRIFT_THRESHOLD_PRES = 0.02      # Acceptable error threshold for pressure (adjust as needed)
 
-# Random seed for reproducibility
-RANDOM_SEED = 42
-
-# Model save path (optional)
-model_save_path = "surrogate_model_rf.joblib"
+# File path for the simulation output data (ground truth)
+DATA_PATH = "/home/musacim/simulation/openfoam/simulation_output_data.csv"
 
 # -------------------------
 # Load Data
 # -------------------------
-try:
-    df = pd.read_csv(output_data_path)
-except Exception as e:
-    raise RuntimeError(f"Error reading simulation output data file at {output_data_path}: {e}")
-
+df = pd.read_csv(DATA_PATH)
 print(f"Loaded {len(df)} rows of simulation output data.")
 
-# -------------------------
-# Define Features and Targets
-# -------------------------
-# Here we use the simulation input parameters as features:
-#   - lid_velocity, viscosity
-# and we predict the simulation outputs:
-#   - velocity_magnitude, pressure
+# Define feature and target columns
+# Features are the inputs: lid_velocity and viscosity.
+# Targets are the outputs: velocity_magnitude and pressure.
 features = ["lid_velocity", "viscosity"]
 targets = ["velocity_magnitude", "pressure"]
 
-# Optionally, inspect a few rows
-print("Data preview:")
-print(df[features + targets].head())
-
-X = df[features].values   # shape: (n_samples, 2)
-y = df[targets].values    # shape: (n_samples, 2)
-
 # -------------------------
-# Split Data into Train and Test Sets
+# Train the Initial Surrogate Model
 # -------------------------
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=RANDOM_SEED
-)
+# Use the first INITIAL_TRAIN_SIZE samples for initial training.
+train_df = df.iloc[:INITIAL_TRAIN_SIZE].copy()
+X_train = train_df[features].values
+y_train = train_df[targets].values
 
-print(f"Training set size: {X_train.shape[0]} samples")
-print(f"Test set size: {X_test.shape[0]} samples")
-
-# -------------------------
-# Train a Multi-output Random Forest Regressor
-# -------------------------
-model = RandomForestRegressor(
-    n_estimators=100,    # you can experiment with more trees or tune this parameter
-    random_state=RANDOM_SEED,
-    n_jobs=-1            # use all available cores
-)
-
-# Fit the model
-print("Training the surrogate model...")
+model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
 model.fit(X_train, y_train)
-print("Training complete.")
+print(f"Trained initial surrogate model on the first {INITIAL_TRAIN_SIZE} samples.")
 
 # -------------------------
-# Evaluate the Model
+# Online Prediction and Adaptive Retraining Loop
 # -------------------------
-# Predict on both training and test data
-y_train_pred = model.predict(X_train)
-y_test_pred = model.predict(X_test)
+# We will iterate through the remaining samples one-by-one, simulating an online process.
+# For each new sample, we use the current surrogate model to predict the outputs.
+# If the prediction error exceeds the defined thresholds, we trigger a retraining event.
+predictions = []  # To store predictions and errors for later analysis
+drift_events = []  # To log indices where drift was detected
 
-# Calculate metrics for each target separately
-def print_metrics(true, pred, target_name):
-    mse = mean_squared_error(true, pred)
-    r2 = r2_score(true, pred)
-    print(f"{target_name} - MSE: {mse:.6f}, R²: {r2:.4f}")
-
-print("\nPerformance on Training Data:")
-for i, target_name in enumerate(targets):
-    print_metrics(y_train[:, i], y_train_pred[:, i], target_name)
-
-print("\nPerformance on Test Data:")
-for i, target_name in enumerate(targets):
-    print_metrics(y_test[:, i], y_test_pred[:, i], target_name)
+# Process samples from INITIAL_TRAIN_SIZE to end
+for idx in range(INITIAL_TRAIN_SIZE, len(df)):
+    # Get the current sample (simulate new incoming data)
+    sample = df.iloc[idx]
+    # Reshape feature vector for prediction (scikit-learn expects a 2D array)
+    X_sample = sample[features].values.reshape(1, -1)
+    y_actual = sample[targets].values.reshape(1, -1)
+    
+    # Make prediction with the current surrogate model
+    y_pred = model.predict(X_sample)
+    
+    # Compute absolute errors for both outputs
+    error_velocity = abs(y_pred[0, 0] - y_actual[0, 0])
+    error_pressure = abs(y_pred[0, 1] - y_actual[0, 1])
+    
+    # Save the results (using lid_time_step if available; otherwise, use the index)
+    time_step = sample.get("lid_time_step", sample.get("time_step", idx))
+    predictions.append({
+        "time_step": time_step,
+        "pred_velocity": y_pred[0, 0],
+        "actual_velocity": y_actual[0, 0],
+        "pred_pressure": y_pred[0, 1],
+        "actual_pressure": y_actual[0, 1],
+        "error_velocity": error_velocity,
+        "error_pressure": error_pressure
+    })
+    
+    # Check if the error exceeds our thresholds to indicate data drift
+    if error_velocity > DRIFT_THRESHOLD_VEL or error_pressure > DRIFT_THRESHOLD_PRES:
+        print(f"Drift detected at sample index {idx} (time_step={time_step}): "
+              f"Velocity error = {error_velocity:.4f}, Pressure error = {error_pressure:.4f}")
+        drift_events.append(idx)
+        
+        # Retrain the surrogate model using all available data up to (and including) the current sample.
+        # (Alternatively, a sliding window strategy can be used.)
+        new_train_df = df.iloc[:idx + 1].copy()
+        X_new_train = new_train_df[features].values
+        y_new_train = new_train_df[targets].values
+        
+        model.fit(X_new_train, y_new_train)
+        print(f"Retrained surrogate model with {idx + 1} samples.")
+    else:
+        print(f"Sample {idx} (time_step={time_step}): No drift detected. "
+              f"Velocity error = {error_velocity:.4f}, Pressure error = {error_pressure:.4f}")
 
 # -------------------------
-# Save the Model for Future Use
+# Save the Final Surrogate Model and Results
 # -------------------------
-joblib.dump(model, model_save_path)
-print(f"\nSurrogate model saved to {model_save_path}")
+MODEL_SAVE_PATH = "adaptive_surrogate_model.joblib"
+joblib.dump(model, MODEL_SAVE_PATH)
+print(f"Final surrogate model saved as '{MODEL_SAVE_PATH}'.")
+
+# Save prediction results to a CSV for further analysis
+predictions_df = pd.DataFrame(predictions)
+predictions_df.to_csv("adaptive_predictions.csv", index=False)
+print("Prediction results saved to 'adaptive_predictions.csv'.")
+
+# Optionally, save drift event indices
+drift_df = pd.DataFrame({"drift_index": drift_events})
+drift_df.to_csv("drift_events.csv", index=False)
+print("Drift events saved to 'drift_events.csv'.")
