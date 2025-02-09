@@ -5,20 +5,7 @@ import time
 import csv
 
 # -----------------------
-# Global variables for drift
-# -----------------------
-# These globals will help us trigger and sustain a drift state for a given number of time steps.
-drift_state = False
-drift_duration_remaining = 0
-
-# Drift parameters (adjust as needed)
-DRIFT_PROBABILITY = 0.02      # 2% chance to start a drift event in a given time step
-DRIFT_DURATION = 10           # Number of consecutive time steps a drift event lasts
-DRIFT_OFFSET_VELOCITY = 0.5   # Additional offset when drift is active (m/s)
-DRIFT_OFFSET_VISCOSITY = 5e-4 # Additional offset when drift is active (m²/s)
-
-# -----------------------
-# Simulation directories and timing setup
+# Configuration
 # -----------------------
 script_start_time = time.time()
 
@@ -26,71 +13,94 @@ script_start_time = time.time()
 base_case_dir = "/home/musacim/simulation/openfoam/tutorials/incompressible/icoFoam/cavity/cavity"
 output_base_dir = "/home/musacim/simulation/openfoam/cavity_simulations"
 
+# Output CSV file
+csv_filename = os.path.join(output_base_dir, "simulation_data_two_ramps.csv")
+
 # Total time steps for simulation runs
-time_steps = range(1, 600)  # Adjust as needed
-
-# CSV file to log simulation parameters and outcomes
-csv_filename = os.path.join(output_base_dir, "simulation_data_wdrift.csv")
-
-# Ensure the output base directory exists
-os.makedirs(output_base_dir, exist_ok=True)
+time_steps = range(1, 601)  # 1..600
 
 # -----------------------
-# Updated parameter generation function with rare data drift
+# Ramp/Drift Intervals
+# -----------------------
+# We'll define two ramps:
+#  1) Ramp 1: from time=200 to 300 (from 1.5 to 2.0)
+#  2) Ramp 2: from time=400 to 500 (from 2.0 to 2.5)
+# Everything else is stable at either 1.5, 2.0, or 2.5.
+RAMP1_START, RAMP1_END = 200, 300
+RAMP2_START, RAMP2_END = 400, 500
+
+BASE_LID_VEL_1 = 1.5   # Stable velocity before ramp 1
+BASE_LID_VEL_2 = 2.0   # Stable velocity after ramp 1
+BASE_LID_VEL_3 = 2.5   # Stable velocity after ramp 2 (final)
+
+# Viscosity remains mostly constant, plus minor sinusoidal + random noise
+BASE_VISCOSITY = 1e-3
+
+# -----------------------
+# Helper: Piecewise Linear Drift
+# -----------------------
+def piecewise_lid_velocity(t):
+    """
+    Piecewise function:
+      - [1..200) : stable at 1.5
+      - [200..300): ramp from 1.5 -> 2.0
+      - [300..400): stable at 2.0
+      - [400..500): ramp from 2.0 -> 2.5
+      - [500..600]: stable at 2.5
+    """
+    # First interval (before Ramp 1)
+    if t < RAMP1_START:
+        return BASE_LID_VEL_1
+
+    # Ramp 1 interval
+    if RAMP1_START <= t < RAMP1_END:
+        fraction = (t - RAMP1_START) / (RAMP1_END - RAMP1_START)
+        return BASE_LID_VEL_1 + fraction * (BASE_LID_VEL_2 - BASE_LID_VEL_1)
+
+    # Stable after Ramp 1, before Ramp 2
+    if RAMP1_END <= t < RAMP2_START:
+        return BASE_LID_VEL_2
+
+    # Ramp 2 interval
+    if RAMP2_START <= t < RAMP2_END:
+        fraction = (t - RAMP2_START) / (RAMP2_END - RAMP2_START)
+        return BASE_LID_VEL_2 + fraction * (BASE_LID_VEL_3 - BASE_LID_VEL_2)
+
+    # Final stable region (after Ramp 2)
+    return BASE_LID_VEL_3
+
+# -----------------------
+# Parameter Generation Function
 # -----------------------
 def get_parameters_for_time_step(t):
     """
-    Generate simulation parameters for a given time step.
-    Incorporates sinusoidal variations with mild noise,
-    and triggers a drift event rarely to simulate data drift.
+    Generate parameters (lid_velocity, viscosity) with two separate ramp intervals.
+    Also add sinusoidal variation and small noise.
     """
-    global drift_state, drift_duration_remaining
+    # 1) Base velocity from the piecewise function
+    base_lid = piecewise_lid_velocity(t)
 
-    # Base parameter values
-    base_lid_velocity = 1.5   # mean lid_velocity (m/s)
-    base_viscosity = 1e-3     # mean viscosity (m²/s)
-
-    # Sinusoidal variation amplitudes (stable behavior)
+    # 2) Sinusoidal variation
+    period = 50
+    angle = 2 * np.pi * (t / period)
     lid_amplitude = 0.1
     viscosity_amplitude = 5e-5
 
-    # Decide if a drift event should occur
-    if drift_state:
-        # In drift state: use additional offsets
-        current_drift_offset_velocity = DRIFT_OFFSET_VELOCITY
-        current_drift_offset_viscosity = DRIFT_OFFSET_VISCOSITY
-        drift_duration_remaining -= 1
-        if drift_duration_remaining <= 0:
-            drift_state = False  # Drift event ends
-    else:
-        # With a low probability, trigger a drift event
-        if np.random.rand() < DRIFT_PROBABILITY:
-            drift_state = True
-            drift_duration_remaining = DRIFT_DURATION
-            current_drift_offset_velocity = DRIFT_OFFSET_VELOCITY
-            current_drift_offset_viscosity = DRIFT_OFFSET_VISCOSITY
-        else:
-            current_drift_offset_velocity = 0.0
-            current_drift_offset_viscosity = 0.0
-
-    # Calculate sinusoidal variations (stable part)
-    period = 50
-    angle = 2 * np.pi * (t / period)
-    lid_velocity_variation = lid_amplitude * np.sin(angle)
+    lid_variation = lid_amplitude * np.sin(angle)
     viscosity_variation = viscosity_amplitude * np.cos(angle)
 
-    # Add small random noise
+    # 3) Small random noise
     lid_noise = np.random.uniform(-0.01, 0.01)
     viscosity_noise = np.random.uniform(-1e-5, 1e-5)
 
-    # Combine base values, stable variations, noise, and any drift offsets
-    lid_velocity = base_lid_velocity + lid_velocity_variation + lid_noise + current_drift_offset_velocity
-    viscosity = base_viscosity + viscosity_variation + viscosity_noise + current_drift_offset_viscosity
+    # 4) Combine for final parameters
+    lid_velocity = base_lid + lid_variation + lid_noise
+    viscosity = BASE_VISCOSITY + viscosity_variation + viscosity_noise
 
     return lid_velocity, viscosity
 
 # -----------------------
-# Helper functions for case creation and modification (unchanged from your version)
+# OpenFOAM Case Setup and Execution
 # -----------------------
 def create_case_directory(lid_velocity, viscosity, time_step):
     case_name = f"cavity_{lid_velocity:.2f}ms_{viscosity:.3e}_t{time_step}"
@@ -155,51 +165,36 @@ def modify_viscosity(case_dir, viscosity):
                 file.write(line)
 
 def run_simulation(case_dir):
-    """
-    Run the simulation using OpenFOAM commands.
-    Returns the elapsed simulation time.
-    """
-    start_time = time.time()  # Start timing
-    # Generate mesh
+    start_time = time.time()
     subprocess.run(["blockMesh"], cwd=case_dir, check=True)
-    # Run icoFoam solver and save output to log file
     log_file = os.path.join(case_dir, "log")
     with open(log_file, "w") as log:
         subprocess.run(["icoFoam"], cwd=case_dir, stdout=log, stderr=subprocess.STDOUT, check=True)
-    end_time = time.time()  # End timing
-    elapsed_time = end_time - start_time
-    return elapsed_time
+    return time.time() - start_time
 
 # -----------------------
-# Main simulation loop with data logging
+# Main Loop
 # -----------------------
-total_simulation_time = 0.0  # Accumulator for simulation runtimes
+os.makedirs(output_base_dir, exist_ok=True)
+total_simulation_time = 0.0
 
-# Open CSV file for writing simulation details
 with open(csv_filename, mode="w", newline="") as csv_file:
     csv_writer = csv.writer(csv_file)
-    # Write header: time step, lid velocity, viscosity, simulation runtime (seconds)
     csv_writer.writerow(["time_step", "lid_velocity", "viscosity", "simulation_time_sec"])
 
-    # Iterate through each time step
     for t in time_steps:
-        # Get simulation parameters (with occasional drift)
         lid_velocity, viscosity = get_parameters_for_time_step(t)
-        # Create and prepare the case directory
         case_dir = create_case_directory(lid_velocity, viscosity, t)
         modify_velocity(case_dir, lid_velocity)
         modify_viscosity(case_dir, viscosity)
-        
-        # Run the simulation and record its runtime
+
         sim_time = run_simulation(case_dir)
         total_simulation_time += sim_time
-        
-        # Log the simulation details to the CSV
-        csv_writer.writerow([t, lid_velocity, viscosity, sim_time])
-        
-        print(f"Time Step {t}: lid_velocity = {lid_velocity:.2f} m/s, viscosity = {viscosity:.3e} m²/s, simulation_time = {sim_time:.2f} sec.")
 
-print(f"\nTotal Simulation Time for {len(time_steps)} time steps: {total_simulation_time:.2f} seconds.")
+        csv_writer.writerow([t, lid_velocity, viscosity, sim_time])
+        print(f"Time Step {t}: lid_velocity={lid_velocity:.2f}, viscosity={viscosity:.3e}, sim_time={sim_time:.2f}s")
+
+print(f"\nTotal Simulation Time for {len(time_steps)} steps: {total_simulation_time:.2f} s")
 script_end_time = time.time()
 elapsed_time = script_end_time - script_start_time
-print(f"Total Script Execution Time: {elapsed_time:.2f} seconds.")
+print(f"Total Script Execution Time: {elapsed_time:.2f} s")
