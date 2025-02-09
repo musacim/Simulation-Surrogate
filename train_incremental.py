@@ -6,7 +6,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_percentage_error
 import matplotlib.pyplot as plt
 import joblib
-
+import time  # Imported for timing measurements
+script_start_time = time.time()
 # Ensure the 'plots' directory exists
 plots_dir = 'plots'
 os.makedirs(plots_dir, exist_ok=True)
@@ -52,6 +53,9 @@ global_pressure_correct = 0
 global_total_velocity = 0
 global_total_pressure = 0
 
+# Initialize total training time
+total_training_time = 0.0
+
 # Iterate through regions
 for region_num, (start_time, end_time) in enumerate(regions, start=1):
     region_key = f'Region {region_num}'
@@ -67,12 +71,21 @@ for region_num, (start_time, end_time) in enumerate(regions, start=1):
     y_velocity_train = training_data['velocity_magnitude']
     y_pressure_train = training_data['pressure']
 
+    # Start timing for initial training
+    train_start_time = time.time()
+
     # Fit scaler and train models
     scaler.fit(X_train)
     X_train_scaled = scaler.transform(X_train)
     velocity_model.fit(X_train_scaled, y_velocity_train)
     pressure_model.fit(X_train_scaled, y_pressure_train)
-    print(f"Initial training completed on time steps {list(initial_train_time_steps)}.")
+
+    # End timing for initial training
+    train_end_time = time.time()
+    train_elapsed_time = train_end_time - train_start_time
+    total_training_time += train_elapsed_time
+
+    print(f"Initial training completed on time steps {list(initial_train_time_steps)} in {train_elapsed_time:.2f} seconds.")
 
     # Iterate through subsequent time steps
     for current_time_step in range(start_time + initial_train_size, end_time + 1):
@@ -145,25 +158,33 @@ for region_num, (start_time, end_time) in enumerate(regions, start=1):
             print(f"Overall Velocity Model - Cumulative Accuracy: {overall_velocity_accuracy:.2f}%")
             print(f"Overall Pressure Model - Cumulative Accuracy: {overall_pressure_accuracy:.2f}%\n")
 
-          
+            # Determine if retraining is needed
             if (overall_velocity_accuracy < accuracy_threshold) or (overall_pressure_accuracy < accuracy_threshold):
                 print(f"Accuracy fell below {accuracy_threshold}%. Retraining models with data up to time step {current_time_step}.\n")
 
-               
+                # Start timing for retraining
+                retrain_start_time = time.time()
+
                 retrain_time_steps = range(start_time, current_time_step + 1)
                 retrain_data = data[data['lid_time_step'].isin(retrain_time_steps)]
                 X_retrain = retrain_data[['lid_velocity', 'viscosity']]
                 y_velocity_retrain = retrain_data['velocity_magnitude']
                 y_pressure_retrain = retrain_data['pressure']
 
-               
+                # Retrain models
                 scaler.fit(X_retrain)
                 X_retrain_scaled = scaler.transform(X_retrain)
                 velocity_model.fit(X_retrain_scaled, y_velocity_retrain)
                 pressure_model.fit(X_retrain_scaled, y_pressure_retrain)
-                print(f"Retrained models on time steps {list(retrain_time_steps)}.\n")
 
-       
+                # End timing for retraining
+                retrain_end_time = time.time()
+                retrain_elapsed_time = retrain_end_time - retrain_start_time
+                total_training_time += retrain_elapsed_time
+
+                print(f"Retrained models on time steps {list(retrain_time_steps)} in {retrain_elapsed_time:.2f} seconds.\n")
+
+                # Reset global accuracy counters after retraining
                 global_velocity_correct = 0
                 global_pressure_correct = 0
                 global_total_velocity = 0
@@ -172,56 +193,61 @@ for region_num, (start_time, end_time) in enumerate(regions, start=1):
             else:
                 print(f"Model performance is satisfactory. No retraining needed.\n")
 
-    print(f"Completed processing for all regions.\n")
-
-    
-    def plot_cumulative_accuracy(global_accuracy, plots_dir):
-        """
-        Plot cumulative accuracy for velocity and pressure models over time and save the plot.
-        """
-        plt.figure(figsize=(14, 7))
-
-        
-        plt.plot(
-            global_accuracy['time_steps'],
-            global_accuracy['velocity_accuracy'],
-            label='Velocity Model',
-            color='blue',
-            linewidth=2,
-            marker='o',
-            markersize=5
-        )
-
-       
-        plt.plot(
-            global_accuracy['time_steps'],
-            global_accuracy['pressure_accuracy'],
-            label='Pressure Model',
-            color='green',
-            linewidth=2,
-            marker='s',
-            markersize=5
-        )
-
-  
-        global_accuracy['retrain_steps'] = []
+print(f"Completed processing for all regions.\n")
+print(f"Total Training Time (Initial Training + Retraining): {total_training_time:.2f} seconds.\n")
 
 
-        plt.title('Cumulative Accuracy of Velocity and Pressure Models Over Time', fontsize=16)
-        plt.xlabel('Time Steps', fontsize=14)
-        plt.ylabel('Cumulative Accuracy (%)', fontsize=14)
-        plt.legend(fontsize=12)
-        plt.grid(True, linestyle='--', alpha=0.6)
-        plt.ylim(0, 100)
-        plt.xticks(fontsize=12)
-        plt.yticks(fontsize=12)
 
-        
-        plot_path = os.path.join(plots_dir, 'cumulative_accuracy_over_time.png')
-        plt.tight_layout()
-        plt.savefig(plot_path, dpi=300)
-        plt.close()
-        print(f"Plot saved to {plot_path}")
+script_end_time = time.time()
+elapsed_time = script_end_time - script_start_time
+print(f"Total Script Execution Time (train_incremental.py): {elapsed_time:.2f} seconds.\n")
+print(f"Total Script Execution Time (train_incremental.py): {elapsed_time:.2f} seconds.\n")
+print(f"Total Script Execution Time (train_incremental.py): {elapsed_time:.2f} seconds.\n")
 
-    
-    plot_cumulative_accuracy(global_accuracy, plots_dir)
+
+
+
+
+
+def plot_cumulative_accuracy(global_accuracy, plots_dir):
+    """
+    Plot cumulative accuracy for velocity and pressure models over time and save the plot.
+    """
+    plt.figure(figsize=(14, 7))
+
+    plt.plot(
+        global_accuracy['time_steps'],
+        global_accuracy['velocity_accuracy'],
+        label='Velocity Model',
+        color='blue',
+        linewidth=2,
+        marker='o',
+        markersize=5
+    )
+
+    plt.plot(
+        global_accuracy['time_steps'],
+        global_accuracy['pressure_accuracy'],
+        label='Pressure Model',
+        color='green',
+        linewidth=2,
+        marker='s',
+        markersize=5
+    )
+
+    plt.title('Cumulative Accuracy of Velocity and Pressure Models Over Time', fontsize=16)
+    plt.xlabel('Time Steps', fontsize=14)
+    plt.ylabel('Cumulative Accuracy (%)', fontsize=14)
+    plt.legend(fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.ylim(0, 100)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+
+    plot_path = os.path.join(plots_dir, 'cumulative_accuracy_over_time.png')
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=300)
+    plt.close()
+    print(f"Plot saved to {plot_path}")
+
+plot_cumulative_accuracy(global_accuracy, plots_dir)

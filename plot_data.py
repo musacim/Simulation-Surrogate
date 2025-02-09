@@ -1,185 +1,108 @@
+#!/usr/bin/env python3
+import os
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
-import os
+from matplotlib.lines import Line2D
 
-# Define the path to the dataset
-data_csv = "/home/musacim/simulation/openfoam/simulation_data.csv"
+# -------------------------
+# File Paths
+# -------------------------
+input_data_path = "/home/musacim/simulation/openfoam/cavity_simulations/simulation_data_wdrift.csv"
+output_data_path = "/home/musacim/simulation/openfoam/simulation_output_data.csv"
 
-# Load the dataset
-df = pd.read_csv(data_csv)
+# -------------------------
+# Load Data
+# -------------------------
+# Input CSV columns: time_step, lid_velocity, viscosity, simulation_time_sec
+try:
+    input_df = pd.read_csv(input_data_path)
+except Exception as e:
+    raise RuntimeError(f"Error reading input data file at {input_data_path}: {e}")
 
-# Ensure 'lid_time_step' is of integer type
-df['lid_time_step'] = df['lid_time_step'].astype(int)
+# Output CSV columns: lid_velocity, viscosity, lid_time_step, velocity_magnitude, pressure
+try:
+    output_df = pd.read_csv(output_data_path)
+except Exception as e:
+    raise RuntimeError(f"Error reading simulation output data file at {output_data_path}: {e}")
 
-# Define regions based on 'lid_time_step'
-def get_region(t):
-    if 1 <= t <= 25:
-        return "Region1_Training"
-    elif 26 <= t <= 40:
-        return "Region2_Shifting"
-    elif 41 <= t <= 55:
-        return "Region3_Shifting"
-    else:
-        return "Unknown"
+print(f"Loaded {len(input_df)} rows of input data and {len(output_df)} rows of output data.")
 
-df['region'] = df['lid_time_step'].apply(get_region)
+# -------------------------
+# Detect Drift in Input Data
+# -------------------------
+# We assume that under stable conditions the lid_velocity is around 1.5 with small variations.
+# When a drift event occurs, the simulation code adds an offset (e.g., +0.5),
+# so values above a chosen threshold (e.g., 1.8) indicate drift.
+drift_threshold = 1.8
+input_df["is_drift"] = input_df["lid_velocity"] > drift_threshold
 
-# Verify that all regions are correctly assigned
-unknown_regions = df[df['region'] == 'Unknown']
-if not unknown_regions.empty:
-    print("Warning: Some data points have been assigned to 'Unknown' region.")
-    print(unknown_regions)
+# -------------------------
+# Create Plots
+# -------------------------
+fig, axs = plt.subplots(3, 1, figsize=(14, 18), sharex=True)
 
-# Filter out 'Unknown' regions for plotting
-df_plot = df[df['region'] != 'Unknown']
+# --- Plot 1: Input Parameters vs. Time Step ---
+axs[0].plot(input_df["time_step"], input_df["lid_velocity"], label="Lid Velocity", 
+            color="blue", marker="o", linestyle="-")
+axs[0].plot(input_df["time_step"], input_df["viscosity"], label="Viscosity", 
+            color="green", marker="x", linestyle="-")
+axs[0].set_ylabel("Parameter Value")
+axs[0].set_title("Input Parameters vs. Time Step")
+axs[0].grid(True)
 
-# Set the aesthetic style of the plots
-sns.set(style="whitegrid")
+# Highlight drift regions on the lid_velocity plot.
+drift_steps = input_df[input_df["is_drift"]]["time_step"].values
+if drift_steps.size > 0:
+    # Group consecutive time steps (if drift lasts multiple steps)
+    groups = np.split(drift_steps, np.where(np.diff(drift_steps) != 1)[0] + 1)
+    for group in groups:
+        start = group[0]
+        end = group[-1]
+        axs[0].axvspan(start, end, color="red", alpha=0.3, label="Drift Region")
+    # Remove duplicate legend entries
+    handles, labels = axs[0].get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    axs[0].legend(unique.values(), unique.keys())
+else:
+    axs[0].legend()
 
-# Define color palette for regions
-palette_dict = {
-    "Region1_Training": "blue",
-    "Region2_Shifting": "orange",
-    "Region3_Shifting": "green"
-}
+# --- Plot 2: Simulation Output vs. Time Step ---
+# Here we use the output file's "lid_time_step" as the x-axis.
+axs[1].plot(output_df["lid_time_step"], output_df["velocity_magnitude"], 
+            label="Velocity Magnitude", color="purple", marker="s", linestyle="-")
+axs[1].plot(output_df["lid_time_step"], output_df["pressure"], 
+            label="Pressure", color="orange", marker="^", linestyle="-")
+axs[1].set_ylabel("Output Value")
+axs[1].set_title("Simulation Output vs. Time Step")
+axs[1].legend()
+axs[1].grid(True)
 
-# Define the order of regions for consistent color mapping
-regions_order = ["Region1_Training", "Region2_Shifting", "Region3_Shifting"]
-colors = [palette_dict[region] for region in regions_order]
+# --- Plot 3: Scatter Plot – Input vs. Output ---
+# Merge the input and output data on time step (input_df.time_step and output_df.lid_time_step)
+merged_df = pd.merge(input_df, output_df, left_on="time_step", right_on="lid_time_step", how="inner")
+# Use input lid_velocity (from input data) for the x-axis.
+# Note: after the merge, the input lid_velocity is named "lid_velocity_x" (and the output is "lid_velocity_y").
+colors = merged_df["is_drift"].map({True: "red", False: "blue"})
+axs[2].scatter(merged_df["lid_velocity_x"], merged_df["velocity_magnitude"], 
+               c=colors, s=60, alpha=0.7)
+axs[2].set_xlabel("Input Lid Velocity")
+axs[2].set_ylabel("Output Velocity Magnitude")
+axs[2].set_title("Input vs. Output: Lid Velocity vs. Velocity Magnitude")
+axs[2].grid(True)
+# Create a custom legend for drift indication.
+legend_elements = [Line2D([0], [0], marker='o', color='w', label='Stable',
+                          markerfacecolor='blue', markersize=10),
+                   Line2D([0], [0], marker='o', color='w', label='Drift',
+                          markerfacecolor='red', markersize=10)]
+axs[2].legend(handles=legend_elements)
 
-# Ensure the output directory exists
-output_dir = "/home/musacim/simulation/openfoam/plots"
-os.makedirs(output_dir, exist_ok=True)
-
-# 1. Scatter Plot: Lid Velocity vs. Viscosity
-plt.figure(figsize=(10, 6))
-sns.scatterplot(
-    data=df_plot,
-    x='lid_velocity',
-    y='viscosity',
-    hue='region',
-    palette=palette_dict,
-    s=100
-)
-plt.title('Lid Velocity vs. Viscosity Across Regions', fontsize=16)
-plt.xlabel('Lid Velocity (m/s)', fontsize=14)
-plt.ylabel('Viscosity (m²/s)', fontsize=14)
-plt.legend(title='Region', fontsize=12, title_fontsize=12)
+# Set a common x-axis label and adjust layout.
+plt.xlabel("Time Step")
 plt.tight_layout()
-plt.savefig(os.path.join(output_dir, 'lid_velocity_vs_viscosity_regions.png'))
-plt.close()
 
-# 2. Histogram: Lid Velocity
-plt.figure(figsize=(10, 6))
-for region, color in palette_dict.items():
-    sns.histplot(
-        data=df_plot[df_plot['region'] == region],
-        x='lid_velocity',
-        label=region,
-        color=color,
-        kde=True,
-        stat="density",
-        linewidth=0,
-        alpha=0.6
-    )
-plt.title('Distribution of Lid Velocity Across Regions', fontsize=16)
-plt.xlabel('Lid Velocity (m/s)', fontsize=14)
-plt.ylabel('Density', fontsize=14)
-plt.legend(title='Region', fontsize=12, title_fontsize=12)
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, 'lid_velocity_distribution_regions.png'))
-plt.close()
-
-# 3. Histogram: Viscosity
-plt.figure(figsize=(10, 6))
-for region, color in palette_dict.items():
-    sns.histplot(
-        data=df_plot[df_plot['region'] == region],
-        x='viscosity',
-        label=region,
-        color=color,
-        kde=True,
-        stat="density",
-        linewidth=0,
-        alpha=0.6
-    )
-plt.title('Distribution of Viscosity Across Regions', fontsize=16)
-plt.xlabel('Viscosity (m²/s)', fontsize=14)
-plt.ylabel('Density', fontsize=14)
-plt.legend(title='Region', fontsize=12, title_fontsize=12)
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, 'viscosity_distribution_regions.png'))
-plt.close()
-
-# 4. Box Plot: Lid Velocity
-plt.figure(figsize=(8, 6))
-sns.boxplot(
-    x='region',
-    y='lid_velocity',
-    hue='region',
-    data=df_plot,
-    palette=palette_dict,
-    order=regions_order
-)
-plt.title('Box Plot of Lid Velocity by Region', fontsize=16)
-plt.xlabel('Region', fontsize=14)
-plt.ylabel('Lid Velocity (m/s)', fontsize=14)
-plt.legend([], [], frameon=False)  # Remove the legend
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, 'lid_velocity_boxplot_regions.png'))
-plt.close()
-
-# 5. Box Plot: Viscosity
-plt.figure(figsize=(8, 6))
-sns.boxplot(
-    x='region',
-    y='viscosity',
-    hue='region',
-    data=df_plot,
-    palette=palette_dict,
-    order=regions_order
-)
-plt.title('Box Plot of Viscosity by Region', fontsize=16)
-plt.xlabel('Region', fontsize=14)
-plt.ylabel('Viscosity (m²/s)', fontsize=14)
-plt.legend([], [], frameon=False)  # Remove the legend
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, 'viscosity_boxplot_regions.png'))
-plt.close()
-
-# 6. Velocity Magnitude vs. Lid Velocity
-plt.figure(figsize=(10, 6))
-sns.scatterplot(
-    data=df_plot,
-    x='lid_velocity',
-    y='velocity_magnitude',
-    hue='region',
-    palette=palette_dict,
-    s=100
-)
-plt.title('Velocity Magnitude vs. Lid Velocity Across Regions', fontsize=16)
-plt.xlabel('Lid Velocity (m/s)', fontsize=14)
-plt.ylabel('Velocity Magnitude', fontsize=14)
-plt.legend(title='Region', fontsize=12, title_fontsize=12)
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, 'velocity_magnitude_vs_lid_velocity_regions.png'))
-plt.close()
-
-# 7. Pressure vs. Viscosity
-plt.figure(figsize=(10, 6))
-sns.scatterplot(
-    data=df_plot,
-    x='viscosity',
-    y='pressure',
-    hue='region',
-    palette=palette_dict,
-    s=100
-)
-plt.title('Pressure vs. Viscosity Across Regions', fontsize=16)
-plt.xlabel('Viscosity (m²/s)', fontsize=14)
-plt.ylabel('Pressure', fontsize=14)
-plt.legend(title='Region', fontsize=12, title_fontsize=12)
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, 'pressure_vs_viscosity_regions.png'))
-plt.close()
+# Save and display the plot
+output_plot_file = "input_output_drift_plot.png"
+plt.savefig(output_plot_file)
+print(f"Plot saved as {output_plot_file}")
+plt.show()

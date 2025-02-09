@@ -6,12 +6,29 @@ import joblib
 import numpy as np
 
 # Paths and parameters
+base_dir = "/home/musacim/simulation/openfoam/cavity_simulations"
 surrogate_model_path = "/home/musacim/simulation/openfoam/surrogate_model.joblib"
 scaler_path = "/home/musacim/simulation/openfoam/scaler.joblib"
 
 # Load the surrogate model and scaler
 surrogate_model = joblib.load(surrogate_model_path)
 scaler = joblib.load(scaler_path)
+
+# Function to dynamically find matching directories
+def find_case_directory(lid_velocity, viscosity, time_step):
+    # Generate possible directory name pattern
+    formatted_velocity = f"{lid_velocity:.3f}".rstrip('0').rstrip('.')  # Match the directory naming
+    formatted_viscosity = f"{viscosity:.3e}".replace('+', '')  # Remove "+" for consistency
+    expected_name = f"cavity_{formatted_velocity}ms_{formatted_viscosity}_t{time_step}"
+    
+    # Check if the directory exists
+    case_path = os.path.join(base_dir, expected_name)
+    if os.path.exists(case_path):
+        return case_path
+    else:
+        # Log that a match was not found
+        print(f"Expected directory '{expected_name}' not found.")
+        return None
 
 # Function to run simulation and measure time
 def run_simulation(case_dir):
@@ -49,17 +66,16 @@ def get_parameters_for_time_step(t):
 
 # Compare over time steps
 time_steps = range(1, 46)
+total_simulation_time = 0.0
+total_surrogate_time = 0.0
+
 for t in time_steps:
     lid_velocity, viscosity = get_parameters_for_time_step(t)
     input_params = {"lid_velocity": lid_velocity, "viscosity": viscosity}
 
-    # Define simulation case directory
-    case_name = f"cavity_{lid_velocity:.2f}ms_{viscosity:.3e}_t{t}".replace('+', '')
-    simulation_case_dir = os.path.join("/home/musacim/simulation/openfoam/cavity_simulations", case_name)
-
-    # Check if the directory exists
-    if not os.path.exists(simulation_case_dir):
-        print(f"Case directory '{simulation_case_dir}' does not exist. Skipping this case.")
+    # Dynamically find the case directory
+    simulation_case_dir = find_case_directory(lid_velocity, viscosity, t)
+    if simulation_case_dir is None:
         continue
 
     # Measure simulation time
@@ -68,10 +84,26 @@ for t in time_steps:
     # Measure surrogate model time
     surrogate_time, velocity_pred, pressure_pred = run_surrogate(input_params)
 
+    # Accumulate total times
+    total_simulation_time += simulation_time
+    total_surrogate_time += surrogate_time
+
     # Print comparison
     print(f"Time Step: {t}")
     print(f"Lid Velocity: {lid_velocity:.2f} m/s, Viscosity: {viscosity:.3e} m²/s")
     print(f"Simulation Time: {simulation_time:.4f} seconds")
     print(f"Surrogate Model Time: {surrogate_time:.4f} seconds")
-    speedup_ratio = simulation_time / surrogate_time
-    print(f"Speedup Ratio (Simulation / Surrogate): {speedup_ratio:.2f}\n")
+    if surrogate_time > 0:
+        speedup_ratio = simulation_time / surrogate_time
+        print(f"Speedup Ratio (Simulation / Surrogate): {speedup_ratio:.2f}\n")
+    else:
+        print("Surrogate model time is too small to calculate speedup ratio.\n")
+
+# Print total results
+print(f"\nTotal Simulation Time for all {len(time_steps)} time steps: {total_simulation_time:.2f} seconds.")
+print(f"Total Surrogate Model Time for all {len(time_steps)} time steps: {total_surrogate_time:.2f} seconds.")
+if total_surrogate_time > 0:
+    overall_speedup = total_simulation_time / total_surrogate_time
+    print(f"Overall Speedup Ratio (Total Simulation / Total Surrogate): {overall_speedup:.2f}")
+else:
+    print("Total surrogate model time is too small to calculate overall speedup ratio.")

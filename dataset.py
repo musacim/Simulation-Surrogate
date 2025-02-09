@@ -6,7 +6,7 @@ import pandas as pd
 base_dir = "/home/musacim/simulation/openfoam/cavity_simulations"
 
 # Define the output CSV file
-output_csv = "/home/musacim/simulation/openfoam/simulation_data.csv"
+output_csv = "/home/musacim/simulation/openfoam/simulation_output_data.csv"
 
 # List all case directories in the base directory
 # Only include directories that contain '_t' indicating time step
