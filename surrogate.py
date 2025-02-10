@@ -2,32 +2,35 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
+import joblib
 
 # -------------------------
-# Configuration Parameters
+# Parse Command‑Line Arguments
 # -------------------------
-INITIAL_TRAIN_SIZE = 100  # Use the first 100 samples for training
+parser = argparse.ArgumentParser(
+    description="Train surrogate model using simulation output data."
+)
+parser.add_argument("--initial", type=int, default=100,
+                    help="Number of initial samples to use for training (default: 100)")
+parser.add_argument("--data_path", type=str, default="/home/musacim/simulation/openfoam/simulation_output_data.csv",
+                    help="Path to the simulation output CSV file.")
+args = parser.parse_args()
 
-# File path for the simulation output data (ground truth)
-DATA_PATH = "/home/musacim/simulation/openfoam/simulation_output_data.csv"
+INITIAL_TRAIN_SIZE = args.initial
+DATA_PATH = args.data_path
 
 # -------------------------
 # Load Simulation Data
 # -------------------------
-# Expected CSV format:
-# lid_velocity,viscosity,lid_time_step,velocity_magnitude,pressure
 df = pd.read_csv(DATA_PATH)
 print(f"Loaded {len(df)} rows of simulation output data.")
 
 # -------------------------
 # Define Features and Targets
 # -------------------------
-# We use the simulation input parameters as features:
-#   - lid_velocity, viscosity
-# And we want to predict the outputs:
-#   - velocity_magnitude, pressure
 features = ["lid_velocity", "viscosity"]
 targets = ["velocity_magnitude", "pressure"]
 
@@ -38,10 +41,14 @@ train_df = df.iloc[:INITIAL_TRAIN_SIZE].copy()
 X_train = train_df[features].values
 y_train = train_df[targets].values
 
-# Initialize and train the Random Forest surrogate model
 model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
 model.fit(X_train, y_train)
 print(f"Trained surrogate model on the first {INITIAL_TRAIN_SIZE} samples.")
+
+# Save the surrogate model for later use
+model_filename = "surrogate_model_rf.joblib"
+joblib.dump(model, model_filename)
+print(f"Saved surrogate model as '{model_filename}'.")
 
 # -------------------------
 # Evaluate the Model on the Entire Dataset
@@ -50,7 +57,6 @@ X_all = df[features].values
 y_all = df[targets].values
 y_pred = model.predict(X_all)
 
-# Compute performance metrics for both targets
 mse_velocity = mean_squared_error(y_all[:, 0], y_pred[:, 0])
 mse_pressure = mean_squared_error(y_all[:, 1], y_pred[:, 1])
 r2_velocity = r2_score(y_all[:, 0], y_pred[:, 0])
@@ -61,22 +67,19 @@ print(f"Velocity Magnitude - MSE: {mse_velocity:.6f}, R²: {r2_velocity:.4f}")
 print(f"Pressure           - MSE: {mse_pressure:.6f}, R²: {r2_pressure:.4f}")
 
 # -------------------------
-# Create a Results DataFrame with Predictions
+# Save Predictions to CSV (Optional)
 # -------------------------
 results_df = df.copy()
 results_df["pred_velocity"] = y_pred[:, 0]
 results_df["pred_pressure"] = y_pred[:, 1]
-
-# Save the predictions to a CSV file for later analysis (optional)
 results_df.to_csv("surrogate_once_predictions.csv", index=False)
 print("Saved predictions to 'surrogate_once_predictions.csv'.")
 
 # -------------------------
-# Plot the Simulation Outputs vs. Surrogate Predictions
+# Plot Simulation Outputs vs. Surrogate Predictions
 # -------------------------
 plt.figure(figsize=(14, 10))
 
-# Subplot 1: Velocity Magnitude
 plt.subplot(2, 1, 1)
 plt.plot(results_df["lid_time_step"], results_df["velocity_magnitude"],
          label="Simulation Velocity", marker="o", linestyle="-", color="blue")
@@ -88,7 +91,6 @@ plt.title("Simulation vs. Surrogate: Velocity Magnitude")
 plt.legend()
 plt.grid(True)
 
-# Subplot 2: Pressure
 plt.subplot(2, 1, 2)
 plt.plot(results_df["lid_time_step"], results_df["pressure"],
          label="Simulation Pressure", marker="o", linestyle="-", color="green")

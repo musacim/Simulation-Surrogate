@@ -1,8 +1,27 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import numpy as np
 import time
 import csv
+import argparse
+import shutil  # <-- Import shutil for directory removal
+
+# -----------------------
+# Parse Command‑Line Arguments
+# -----------------------
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Run simulation for a given range of time steps."
+    )
+    parser.add_argument("--start", type=int, default=1,
+                        help="Starting time step (default: 1)")
+    parser.add_argument("--end", type=int, default=600,
+                        help="Ending time step (default: 600)")
+    args = parser.parse_args()
+else:
+    # If imported, set default values.
+    args = type("Args", (), {"start": 1, "end": 600})
 
 # -----------------------
 # Configuration
@@ -13,74 +32,42 @@ script_start_time = time.time()
 base_case_dir = "/home/musacim/simulation/openfoam/tutorials/incompressible/icoFoam/cavity/cavity"
 output_base_dir = "/home/musacim/simulation/openfoam/cavity_simulations"
 
-# Output CSV file
+# Output CSV file (this script writes a temporary CSV; the final CSV is produced by dataset.py)
 csv_filename = os.path.join(output_base_dir, "simulation_data_two_ramps.csv")
 
-# Total time steps for simulation runs
-time_steps = range(1, 601)  # 1..600
-
 # -----------------------
-# Ramp/Drift Intervals
+# Ramp/Drift Intervals and Base Values
 # -----------------------
-# We'll define two ramps:
-#  1) Ramp 1: from time=200 to 300 (from 1.5 to 2.0)
-#  2) Ramp 2: from time=400 to 500 (from 2.0 to 2.5)
-# Everything else is stable at either 1.5, 2.0, or 2.5.
 RAMP1_START, RAMP1_END = 200, 300
 RAMP2_START, RAMP2_END = 400, 500
 
 BASE_LID_VEL_1 = 1.5   # Stable velocity before ramp 1
 BASE_LID_VEL_2 = 2.0   # Stable velocity after ramp 1
-BASE_LID_VEL_3 = 2.5   # Stable velocity after ramp 2 (final)
+BASE_LID_VEL_3 = 2.5   # Stable velocity after ramp 2
 
-# Viscosity remains mostly constant, plus minor sinusoidal + random noise
 BASE_VISCOSITY = 1e-3
 
 # -----------------------
 # Helper: Piecewise Linear Drift
 # -----------------------
 def piecewise_lid_velocity(t):
-    """
-    Piecewise function:
-      - [1..200) : stable at 1.5
-      - [200..300): ramp from 1.5 -> 2.0
-      - [300..400): stable at 2.0
-      - [400..500): ramp from 2.0 -> 2.5
-      - [500..600]: stable at 2.5
-    """
-    # First interval (before Ramp 1)
     if t < RAMP1_START:
         return BASE_LID_VEL_1
-
-    # Ramp 1 interval
     if RAMP1_START <= t < RAMP1_END:
         fraction = (t - RAMP1_START) / (RAMP1_END - RAMP1_START)
         return BASE_LID_VEL_1 + fraction * (BASE_LID_VEL_2 - BASE_LID_VEL_1)
-
-    # Stable after Ramp 1, before Ramp 2
     if RAMP1_END <= t < RAMP2_START:
         return BASE_LID_VEL_2
-
-    # Ramp 2 interval
     if RAMP2_START <= t < RAMP2_END:
         fraction = (t - RAMP2_START) / (RAMP2_END - RAMP2_START)
         return BASE_LID_VEL_2 + fraction * (BASE_LID_VEL_3 - BASE_LID_VEL_2)
-
-    # Final stable region (after Ramp 2)
     return BASE_LID_VEL_3
 
 # -----------------------
 # Parameter Generation Function
 # -----------------------
 def get_parameters_for_time_step(t):
-    """
-    Generate parameters (lid_velocity, viscosity) with two separate ramp intervals.
-    Also add sinusoidal variation and small noise.
-    """
-    # 1) Base velocity from the piecewise function
     base_lid = piecewise_lid_velocity(t)
-
-    # 2) Sinusoidal variation
     period = 50
     angle = 2 * np.pi * (t / period)
     lid_amplitude = 0.1
@@ -89,11 +76,9 @@ def get_parameters_for_time_step(t):
     lid_variation = lid_amplitude * np.sin(angle)
     viscosity_variation = viscosity_amplitude * np.cos(angle)
 
-    # 3) Small random noise
     lid_noise = np.random.uniform(-0.01, 0.01)
     viscosity_noise = np.random.uniform(-1e-5, 1e-5)
 
-    # 4) Combine for final parameters
     lid_velocity = base_lid + lid_variation + lid_noise
     viscosity = BASE_VISCOSITY + viscosity_variation + viscosity_noise
 
@@ -173,16 +158,22 @@ def run_simulation(case_dir):
     return time.time() - start_time
 
 # -----------------------
-# Main Loop
+# Clean Up Existing Output Directory
 # -----------------------
+if os.path.exists(output_base_dir):
+    shutil.rmtree(output_base_dir)  # Remove existing output directory and its contents
 os.makedirs(output_base_dir, exist_ok=True)
+
+# -----------------------
+# Main Loop: Run only for time steps in the provided range.
+# -----------------------
 total_simulation_time = 0.0
 
 with open(csv_filename, mode="w", newline="") as csv_file:
     csv_writer = csv.writer(csv_file)
     csv_writer.writerow(["time_step", "lid_velocity", "viscosity", "simulation_time_sec"])
 
-    for t in time_steps:
+    for t in range(args.start, args.end + 1):
         lid_velocity, viscosity = get_parameters_for_time_step(t)
         case_dir = create_case_directory(lid_velocity, viscosity, t)
         modify_velocity(case_dir, lid_velocity)
@@ -194,7 +185,7 @@ with open(csv_filename, mode="w", newline="") as csv_file:
         csv_writer.writerow([t, lid_velocity, viscosity, sim_time])
         print(f"Time Step {t}: lid_velocity={lid_velocity:.2f}, viscosity={viscosity:.3e}, sim_time={sim_time:.2f}s")
 
-print(f"\nTotal Simulation Time for {len(time_steps)} steps: {total_simulation_time:.2f} s")
+print(f"\nTotal Simulation Time for steps {args.start} to {args.end}: {total_simulation_time:.2f} s")
 script_end_time = time.time()
 elapsed_time = script_end_time - script_start_time
 print(f"Total Script Execution Time: {elapsed_time:.2f} s")
