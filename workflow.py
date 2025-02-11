@@ -16,7 +16,7 @@ from sklearn.metrics import mean_squared_error
 
 TOTAL_STEPS = 1000                # Total number of data points (time steps)
 INITIAL_TRAIN_SIZE = 100          # Use steps 1 to 100 for initial simulation & surrogate training
-DRIFT_THRESHOLD = 2               # Drift threshold (z-score on lid_velocity)
+DRIFT_THRESHOLD = 3               # Drift threshold (z-score on lid_velocity)
 RETRAIN_BATCH_SIZE = 80           # When drift is detected, simulate these many points for retraining
 
 SIMULATION_SCRIPT = "new_sim.py"          # Real simulation script using OpenFOAM
@@ -289,21 +289,14 @@ def main():
     groundtruth_df["time_trans"] = groundtruth_df["time_step"].apply(transform_time)
     
     # --- Plot order to ensure blue (surrogate) is in front of red (simulation) ---
-    # 1) Ground truth (black), drawn first (at the back)
-    ax_main.scatter(
-        groundtruth_df["time_trans"], 
-        groundtruth_df["velocity_magnitude_ground"], 
-        c="black", marker="s", 
-        label="Full Simulation Ground Truth", 
-        zorder=1
-    )
+ 
     # 2) System simulation (red)
     ax_main.scatter(
         sim_pts["time_trans"], 
         sim_pts["velocity_magnitude"], 
         c="red", marker="o", 
         label="Simulation Output (System)", 
-        zorder=2
+        zorder=1
     )
     # 3) Surrogate prediction (blue), drawn last so it appears on top
     ax_main.scatter(
@@ -311,7 +304,7 @@ def main():
         pred_pts["pred_velocity"], 
         c="blue", marker="x", 
         label="Surrogate Prediction", 
-        zorder=3
+        zorder=2
     )
     
     # Drift metric line
@@ -325,8 +318,8 @@ def main():
     ax_main.set_xlabel("Time Step", fontsize=14, labelpad=10)
     ax_main.set_ylabel("Velocity Magnitude", fontsize=14, labelpad=10)
     ax_main.set_title(
-        "Workflow Results: Simulation vs. Surrogate Predictions\n"
-        "Surrogate: RandomForestRegressor | Drift: z-score (lid_velocity)",
+        "Workflow Results: Surrogate Predictions and Collected Points",
+        
         fontsize=16
     )
     ax_main.grid(True, alpha=0.3)
@@ -384,7 +377,7 @@ def main():
         ax_bar.text(0.5, max_height * 1.05, f"Speed Up: {speedup:.2f}x", ha="center", va="bottom", fontsize=16, color="darkblue")
     
     ax_bar.set_ylabel("Total Time (s)", fontsize=14)
-    ax_bar.set_title("Stacked Timing Metrics: Our System vs. Full Simulation", fontsize=16)
+    ax_bar.set_title("Time Comparison: Our System vs. Full Simulation", fontsize=16)
     ax_bar.set_ylim(0, max(system_total_time, full_sim_time) * 1.2 + 3)
     handles_bar, labels_bar = ax_bar.get_legend_handles_labels()
     unique_bar = dict(zip(labels_bar, handles_bar))
