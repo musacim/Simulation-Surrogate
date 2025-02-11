@@ -386,15 +386,16 @@ def main():
     # Adjust spacing and add information text below the plot
     plt.subplots_adjust(bottom=0.25, hspace=0.4)
     info_text = (
+        
         f"Workflow Information:\n"
         f"- Surrogate Model: RandomForestRegressor\n"
         f"- Initial Training: Steps 1 to {INITIAL_TRAIN_SIZE}\n"
         f"- Drift Detection: z-score on lid_velocity (Threshold = {DRIFT_THRESHOLD})\n"
         f"- Retraining Batch Size: {RETRAIN_BATCH_SIZE} data points upon drift\n"
-        f"- Full Simulation run on all {TOTAL_STEPS} data points\n"
-        f"- Ground Truth inputs are generated using get_parameters_for_time_step\n"
         f"- New surrogate model retrained using ALL simulation data collected so far\n"
         f"- Average Velocity Prediction Error: {velocity_error_pct:.2f}%"
+        f"- Full Simulation run on all {TOTAL_STEPS} data points\n"
+
     )
     plt.figtext(
         0.5, 0.02, info_text, wrap=True, 
