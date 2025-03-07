@@ -7,43 +7,31 @@ import argparse
 # Parse Command‑Line Arguments (optional)
 # -----------------------
 parser = argparse.ArgumentParser(
-    description="Convert BFS simulation case directories into a CSV of simulation outputs."
+    description="Convert Hartmann simulation case directories into a CSV of simulation outputs."
 )
-parser.add_argument("--base_dir", type=str, default="/home/musacim/simulation/openfoam/bfs_simulations",
-                    help="Base directory where BFS simulation case folders are stored.")
-parser.add_argument("--output_csv", type=str, default="/home/musacim/simulation/openfoam/bfs_simulation_output_data.csv",
+parser.add_argument("--base_dir", type=str, default="/home/musacim/simulation/openfoam/mhd/hartmann_simulations",
+                    help="Base directory where simulation case folders are stored.")
+parser.add_argument("--output_csv", type=str, default="/home/musacim/simulation/openfoam/mhd/hartmann_simulation_output_data.csv",
                     help="Output CSV file path.")
 args = parser.parse_args()
 
-# -----------------------
-# Directories and Files
-# -----------------------
 base_dir = args.base_dir
 output_csv = args.output_csv
 
-# List all case directories in the base directory (directories with '_t' in their name)
+# List all case directories that follow the naming convention used in new_sim_mhd.py
 case_dirs = [d for d in os.listdir(base_dir)
-             if os.path.isdir(os.path.join(base_dir, d)) and '_t' in d]
+             if os.path.isdir(os.path.join(base_dir, d)) and d.startswith("hartmann_inlet")]
 
 def parse_case_directory_name(case_name):
-    # Expected format: bfs_{inlet_velocity}ms_{viscosity}_t{time_step}
-    parts = case_name.split('_')
-    if len(parts) != 4:
-        print(f"Skipping directory '{case_name}' due to unexpected format")
-        return None, None, None
+    # Expected format: hartmann_inlet{inlet_velocity}_B{B_magnitude}_t{time_step}
     try:
-        # parts[0] should be "bfs"
-        inlet_velocity_str = parts[1][:-2]  # Remove 'ms'
-        viscosity_str = parts[2]
-        bfs_time_step_str = parts[3][1:]      # Remove leading 't'
-
-        inlet_velocity = float(inlet_velocity_str)
-        viscosity = float(viscosity_str)
-        bfs_time_step = int(bfs_time_step_str)
-
-        return inlet_velocity, viscosity, bfs_time_step
-    except (ValueError, IndexError) as e:
-        print(f"Error parsing case directory '{case_name}': {e}")
+        parts = case_name.split("_")
+        inlet_velocity = float(parts[1].replace("inlet", ""))
+        B_magnitude = float(parts[2].replace("B", ""))
+        time_step = int(parts[3].replace("t", ""))
+        return inlet_velocity, B_magnitude, time_step
+    except Exception as e:
+        print(f"Error parsing directory {case_name}: {e}")
         return None, None, None
 
 def parse_openfoam_vector_field(file_path):
@@ -88,24 +76,21 @@ def parse_openfoam_scalar_field(file_path):
 def compute_velocity_magnitude(vectors):
     return [ (v[0]**2 + v[1]**2 + v[2]**2)**0.5 for v in vectors ]
 
-# -----------------------
-# Collect Data
-# -----------------------
 data_list = []
 
 for case_dir in case_dirs:
-    inlet_velocity, viscosity, bfs_time_step = parse_case_directory_name(case_dir)
+    inlet_velocity, B_magnitude, time_step = parse_case_directory_name(case_dir)
     if inlet_velocity is None:
         continue
 
     case_path = os.path.join(base_dir, case_dir)
-    simulation_times = [d for d in os.listdir(case_path)
-                        if os.path.isdir(os.path.join(case_path, d)) and d.replace('.', '', 1).isdigit()]
-    if not simulation_times:
-        print(f"No simulation time directories found in '{case_path}'.")
+    # Identify the latest time directory (assume numeric folder names)
+    time_dirs = [d for d in os.listdir(case_path) if d.replace('.','',1).isdigit()]
+    if not time_dirs:
+        print(f"No time directories found in '{case_path}'.")
         continue
-    latest_sim_time = max(simulation_times, key=float)
-    time_dir = os.path.join(case_path, latest_sim_time)
+    latest_time = max(time_dirs, key=float)
+    time_dir = os.path.join(case_path, latest_time)
     u_file = os.path.join(time_dir, "U")
     p_file = os.path.join(time_dir, "p")
 
@@ -129,14 +114,14 @@ for case_dir in case_dirs:
 
     if avg_velocity_magnitude is not None and avg_pressure is not None:
         data_list.append({
+            "time_step": time_step,
             "inlet_velocity": inlet_velocity,
-            "viscosity": viscosity,
-            "bfs_time_step": bfs_time_step,
+            "B_magnitude": B_magnitude,
             "velocity_magnitude": avg_velocity_magnitude,
             "pressure": avg_pressure
         })
 
 df = pd.DataFrame(data_list)
-df = df.sort_values('bfs_time_step')
+df = df.sort_values('time_step')
 df.to_csv(output_csv, index=False)
 print(f"Data saved to {output_csv}")
